@@ -19,6 +19,12 @@ class HttpAgentClient:
         r.raise_for_status()
         return r.json()
 
+    def assay(self, center_code: str) -> dict:
+        url = settings.center_agents[center_code]
+        r = httpx.get(f"{url}/assay", timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
+
     def execute(self, center_code: str, job: dict) -> dict:
         url = settings.center_agents[center_code]
         try:
@@ -57,6 +63,14 @@ class LocalAgentClient:
         extra = json.load(open(meta_path)) if os.path.exists(meta_path) else {}
         return {"center": center_code, "patients": n, "fields": fields,
                 "dx_years": extra.get("dx_years", []), "seed": extra.get("seed")}
+
+    def assay(self, center_code: str) -> dict:
+        import json
+
+        path = os.path.join(self._dir(center_code), "assay.json")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"no assay.json for {center_code}")
+        return json.load(open(path))
 
     def execute(self, center_code: str, job: dict) -> dict:
         try:

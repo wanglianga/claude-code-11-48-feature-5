@@ -16,6 +16,8 @@ import json
 import random
 from pathlib import Path
 
+from . import assay as assay_meta
+
 # canonical variable -> per-center local CSV column
 CENTER_FIELDS = {
     "C1": {"patient.sex": "pat_sex", "patient.birth_year": "pat_byear",
@@ -63,6 +65,34 @@ OUTCOMES = ["remission", "stable", "progression", "death"]
 OUTCOME_WEIGHTS = [0.45, 0.30, 0.18, 0.07]
 
 
+def _latent_truth(rng: random.Random) -> float:
+    """Hidden common-scale value: mostly typical, with a high tail that lands
+    outside several platforms' calibrated range and a low tail below the LOD."""
+    roll = rng.random()
+    if roll < 0.06:
+        return max(0.05, rng.gauss(0.45, 0.18))
+    if roll < 0.12:
+        return max(0.2, rng.gauss(12.2, 1.4))
+    return max(0.05, rng.gauss(6.0, 1.8))
+
+
+def _platform_lab(center: str, truth: float, fu_date: str) -> float:
+    """Raw instrument value on the center's own scale, with lot drift applied.
+
+    Lot assignments and drift are what makes a naive cross-center mean biased:
+    - C2's replacement lot B-2502 reads +0.75 higher from 2026-06-01.
+    - C3's failed-QC lot C-2502 reads +0.90 higher during 2026-03..2026-05.
+    Values are NOT clipped: below-LOD and above-ULOQ readings stay in the data
+    and are classified locally, never imputed.
+    """
+    raw = assay_meta.raw_value(center, truth)
+    if center == "C2" and fu_date >= "2026-06-01":
+        raw += 0.75
+    if center == "C3" and "2026-03-01" <= fu_date <= "2026-05-30":
+        raw += 0.90
+    return round(raw, 3)
+
+
 def generate_center(center: str, root: Path, seed: int | None = None,
                     size: int | None = None) -> dict:
     rng = random.Random(seed if seed is not None else DEFAULT_SEEDS[center])
@@ -77,8 +107,11 @@ def generate_center(center: str, root: Path, seed: int | None = None,
         path = rng.choices(PATHS, weights=PATH_WEIGHTS, k=1)[0]
         tx_start = f"{rng.randint(2020, 2025)}-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}"
         outcome = rng.choices(OUTCOMES, weights=OUTCOME_WEIGHTS, k=1)[0]
-        fu_date = f"{rng.randint(2021, 2026)}-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}"
-        lab = round(rng.gauss(6.0, 1.8), 2)
+        # Follow-up dates fall inside the assay validity period (2026 batches),
+        # spanning the lot transitions used by the calibration demos.
+        fu_date = f"2026-{rng.randint(1, 8):02d}-{rng.randint(1, 28):02d}"
+        truth = _latent_truth(rng)
+        lab = _platform_lab(center, truth, fu_date)
         row = {"patient_id": f"{center}-P{i:04d}"}
         for var, col in fields.items():
             if var == "patient.sex":
@@ -120,6 +153,9 @@ def generate_center(center: str, root: Path, seed: int | None = None,
         "fields": header,
         "dx_years": sorted({r[fields["diagnosis.date"]][:4] for r in rows}),
     }
+    (cdir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+    assay_path = assay_meta.write_assay(center, root)
+    meta["assay_metadata"] = bool(assay_path)
     (cdir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
     return meta
 

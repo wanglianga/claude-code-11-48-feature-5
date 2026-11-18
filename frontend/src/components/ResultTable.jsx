@@ -2,7 +2,9 @@ const METRIC_LABEL = {
   n: '人数',
   outcome_remission_n: '缓解人数',
   outcome_remission_rate: '缓解率',
-  'followup.lab_value_mean': '实验室指标均值',
+  'followup.lab_value_mean': '实验室指标均值（原始）',
+  'followup.lab_value_std_mean': '实验室指标标准化均值（可比）',
+  'followup.lab_value_std_n': '可比例数',
 }
 
 export function metricLabel(m) {

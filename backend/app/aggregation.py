@@ -56,7 +56,7 @@ def aggregate(center_results: list[dict], count_metrics: list[str]) -> dict:
         b["metrics"] = merge_group_metrics(parts)
         # recompute rates from merged counts
         for m in list(b["metrics"]):
-            if m.endswith("_n") and not m.startswith("_"):
+            if m.endswith("_n") and not m.startswith("_") and not m.endswith("_std_n"):
                 base = m[:-2]
                 rate_key = f"{base}_rate"
                 if any(rate_key in p["metrics"] for p in parts):
@@ -71,12 +71,13 @@ def aggregate(center_results: list[dict], count_metrics: list[str]) -> dict:
         [{"metrics": g["metrics"]} for g in groups]
     )
     for m in list(total_metrics):
-        if m.endswith("_n") and not m.startswith("_"):
+        if m.endswith("_n") and not m.startswith("_") and not m.endswith("_std_n"):
             base = m[:-2]
             total_metrics[f"{base}_rate"] = (
                 round(total_metrics[m] / total_n, 4) if total_n else None
             )
 
+    harmonization = _merge_harmonization(center_results, included)
     return {
         "groups": groups,
         "totals": {"n": total_n, "metrics": total_metrics},
@@ -86,7 +87,45 @@ def aggregate(center_results: list[dict], count_metrics: list[str]) -> dict:
             "excluded_centers": excluded,
             "complete": not excluded,
         },
+        "harmonization": harmonization,
     }
+
+
+def _merge_harmonization(center_results: list[dict], included: list[str]) -> dict:
+    """Roll up each center's local measurement-scale classification.
+
+    NOTE: these are *diagnostic* counts only — how many raw results were
+    comparable vs left-censored / out of calibrated range / in a QC-failed lot.
+    They are never used to replace a missing value with a number.
+    """
+    per_var: dict[str, dict] = {}
+    by_center = {cr["center"]: cr for cr in center_results}
+    for code in included:
+        cr = by_center[code]
+        harm = (cr.get("aggregates") or {}).get("harmonization") or {}
+        for var, hv in harm.items():
+            v = per_var.setdefault(var, {
+                "variable": var,
+                "centers": {},
+                "totals": {"values_total": 0, "comparable": 0,
+                           "counts": {}},
+            })
+            v["centers"][code] = hv
+            v["totals"]["values_total"] += hv.get("values_total", 0)
+            v["totals"]["comparable"] += hv.get("comparable", 0)
+            for cls, n in (hv.get("counts") or {}).items():
+                v["totals"]["counts"][cls] = v["totals"]["counts"].get(cls, 0) + n
+    for var, v in per_var.items():
+        t = v["totals"]
+        t["non_comparable"] = t["values_total"] - t["comparable"]
+        t["non_comparable_ratio"] = (
+            round(t["non_comparable"] / t["values_total"], 4)
+            if t["values_total"] else None
+        )
+        # centers whose lab metric is NOT group-comparable at all
+        v["non_comparable_centers"] = sorted(
+            code for code, hv in v["centers"].items() if not hv.get("enabled"))
+    return per_var
 
 
 def count_metrics_for(request_spec: dict) -> list[str]:
@@ -94,4 +133,8 @@ def count_metrics_for(request_spec: dict) -> list[str]:
     for m in request_spec.get("metrics", []):
         if m["type"] == "outcome_count":
             ms.append(f"outcome_{m['value']}_n")
+        elif m["type"] == "standardized_mean":
+            # comparable-value count is a count metric: protects against a
+            # mean resting on a single patient's measurement
+            ms.append(f"{m['variable']}_std_n")
     return ms

@@ -56,6 +56,23 @@ def analyze_table(table: dict, k: int) -> list[dict]:
                     flags.append({"group": g["label"], "metric": m, "value": v,
                                   "reason": "small_group"})
 
+    # A standardized mean resting on a small number of comparable values can
+    # expose an individual reading (n=1 == that patient's measurement), so the
+    # mean travels with its comparable-count flag.
+    for g in groups:
+        for m in count_metrics:
+            if not m.endswith("_std_n"):
+                continue
+            v = g["metrics"].get(m)
+            if isinstance(v, (int, float)) and 0 < v < k:
+                mean_m = m[: -len("_std_n")] + "_std_mean"
+                if mean_m in g["metrics"] and mean_m not in g.get("suppressed", []):
+                    if not any(f["group"] == g["label"] and f["metric"] == mean_m
+                               for f in flags):
+                        flags.append({"group": g["label"], "metric": mean_m,
+                                      "value": g["metrics"][mean_m],
+                                      "reason": "small_comparable_n"})
+
     # Differencing: a single hidden cell in a count column is derivable from the total.
     for m in count_metrics:
         total = totals.get("n") if m == "n" else totals.get("metrics", {}).get(m)

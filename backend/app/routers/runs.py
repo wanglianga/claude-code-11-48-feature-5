@@ -9,7 +9,14 @@ from ..aggregation import aggregate, count_metrics_for
 from ..config import settings
 from ..db import SessionLocal, get_db
 from ..deps import current_user, require_role
-from ..models import Center, RuleVersion, Run, RunBatch, RunCenterResult, User
+from ..models import (
+    Center,
+    Run,
+    RunBatch,
+    RunCalibration,
+    RuleVersion,
+    User,
+)
 from ..orchestrator import create_run, execute_run
 from ..security import content_hash
 
@@ -36,6 +43,33 @@ def run_summary(run: Run, db: Session) -> dict:
         "centers_total": len(run.center_results),
         "centers_failed": len(gaps),
     }
+
+
+def calibration_view(run: Run, db: Session) -> list[dict]:
+    """Per-center calibration snapshot used by this run (immutable once run)."""
+    centers = _center_map(db)
+    rows = (db.query(RunCalibration)
+            .filter(RunCalibration.run_id == run.id)
+            .order_by(RunCalibration.center_id).all())
+    out = []
+    for rc in rows:
+        t = rc.transform or {}
+        out.append({
+            "center_code": centers[rc.center_id].code,
+            "variable": rc.variable,
+            "model_id": rc.model_id,
+            "model_version_no": rc.model_version_no,
+            "route": rc.route,
+            "status": rc.status,
+            "enabled": bool(t.get("enabled")),
+            "slope": t.get("slope"), "intercept": t.get("intercept"),
+            "range_low": t.get("range_low"), "range_high": t.get("range_high"),
+            "detection_limit": t.get("detection_limit"),
+            "qc_failed_windows": t.get("qc_failed_windows", []),
+            "flags": t.get("flags", []),
+            "transform_hash": content_hash(t) if t else None,
+        })
+    return out
 
 
 def run_detail(run: Run, db: Session) -> dict:
@@ -68,6 +102,7 @@ def run_detail(run: Run, db: Session) -> dict:
                      "batch_id": b.batch_id, "batch_label": b.batch_label}
                     for b in batches],
         "center_results": center_results,
+        "calibrations": calibration_view(run, db),
         "result": table,
     })
     return d

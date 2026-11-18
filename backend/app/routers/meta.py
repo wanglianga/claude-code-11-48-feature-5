@@ -21,7 +21,8 @@ def active_dictionary(db: Session = Depends(get_db), _: User = Depends(current_u
         "version": d.version,
         "variables": [
             {"name": v.name, "entity": v.entity, "label": v.label,
-             "value_type": v.value_type, "allowed_values": v.allowed_values}
+             "value_type": v.value_type, "allowed_values": v.allowed_values,
+             "unit": v.unit}
             for v in d.variables
         ],
     }

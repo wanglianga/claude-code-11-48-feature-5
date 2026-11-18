@@ -17,6 +17,7 @@ from ..models import (
     ReviewDecision,
     Run,
     RunBatch,
+    RunCalibration,
     User,
 )
 from ..privacy import analyze_table, apply_merge, apply_suppression
@@ -112,6 +113,22 @@ def _publish(db: Session, o: OutputTable, decision: ReviewDecision,
     run = db.get(Run, o.run_id)
     centers = {c.id: c for c in db.query(Center).all()}
     batches = db.query(RunBatch).filter(RunBatch.run_id == run.id).all()
+    calibrations = []
+    for rc in (db.query(RunCalibration)
+               .filter(RunCalibration.run_id == run.id)
+               .order_by(RunCalibration.center_id)):
+        t = rc.transform or {}
+        calibrations.append({
+            "center_code": centers[rc.center_id].code,
+            "variable": rc.variable,
+            "model_id": rc.model_id,
+            "model_version_no": rc.model_version_no,
+            "route": rc.route,
+            "status": rc.status,
+            "transform_hash": content_hash(t) if t else None,
+            "range_low": t.get("range_low"), "range_high": t.get("range_high"),
+            "detection_limit": t.get("detection_limit"),
+        })
     report = {
         "title": o.title,
         "table": o.table_data,
@@ -128,6 +145,8 @@ def _publish(db: Session, o: OutputTable, decision: ReviewDecision,
                         for b in batches],
             "k_threshold": run.k_threshold,
             "coverage": o.table_data.get("coverage"),
+            "calibrations": calibrations,
+            "harmonization": o.table_data.get("harmonization"),
             "review": {"decision_id": decision.id,
                        "reviewer": reviewer.display_name,
                        "action": decision.action,

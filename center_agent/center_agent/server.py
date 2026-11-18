@@ -25,6 +25,8 @@ class Job(BaseModel):
     conditions: list[dict] = []
     request_spec: dict
     mapping: dict[str, dict]
+    # variable -> calibration transform snapshot (validated, versioned platform-side)
+    calibrations: dict[str, dict] = {}
 
 
 def create_app(center: str, data_dir: str) -> FastAPI:
@@ -53,6 +55,18 @@ def create_app(center: str, data_dir: str) -> FastAPI:
             "dx_years": extra.get("dx_years", []),
             "seed": extra.get("seed"),
         }
+
+    @app.get("/assay")
+    def assay():
+        """Center-registered assay metadata + de-identified calibration samples.
+
+        Only platform/reagent/QC/calibration metadata and de-identified
+        reference or bridge sample values are exposed — never patient records.
+        """
+        path = root / "assay.json"
+        if not path.exists():
+            raise HTTPException(404, "no assay metadata registered for this center")
+        return json.loads(path.read_text())
 
     @app.post("/execute")
     def execute(job: Job):

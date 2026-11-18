@@ -75,6 +75,77 @@ def main() -> None:
           f"{run_gap['result']['totals']['n']} = "
           f"{run_full['result']['totals']['n']} - {c5_n}")
 
+    # ---- 2b. cross-center assay calibration -------------------------------------
+    # Establish a deterministic C2 baseline first (drifted lot excluded) so this
+    # smoke is idempotent when re-run against the same database.
+    httpx.post(f"{BASE}/api/harmonization/centers/C2/sync", headers=admin)
+    base = httpx.post(f"{BASE}/api/harmonization/assays/C2/fit", headers=admin,
+                      json={"exclude_lots": ["B-2502"]}).json()
+    base_v = base["version_no"]
+    check("C2 基线校准（排除漂移批次）为可比", base["status"] == "validated")
+
+    cov = httpx.get(f"{BASE}/api/harmonization/coverage", headers=r1).json()
+    by = {c["center_code"]: c for c in cov["centers"]}
+    check("校准覆盖：可溯源/双批次桥接中心可比，单批次桥接与无桥接样本中心不可比",
+          by["C1"]["comparable"] and by["C2"]["comparable"]
+          and by["C3"]["comparable"] and by["C4"]["comparable"]
+          and not by["C6"]["comparable"] and not by["C5"]["comparable"]
+          and any("bridge_lot_coverage" in x for x in by["C6"]["reasons"]))
+    bias = httpx.get(f"{BASE}/api/harmonization/bias/C1", headers=r1).json()
+    check("偏差诊断：原始偏差经标准化后收敛",
+          abs(bias["diagnostics"]["standardized_bias"])
+          < abs(bias["diagnostics"]["raw_bias"]) + 1e-9
+          and "by_lot" in bias["diagnostics"])
+
+    std_spec = {"group_by": ["treatment.path"],
+                "metrics": [{"type": "count"},
+                            {"type": "standardized_mean",
+                             "variable": "followup.lab_value"}]}
+    run_std = httpx.post(f"{BASE}/api/runs", headers=r1,
+                         json={"rule_version_id": 1,
+                               "request_spec": std_spec}).json()
+    hv = run_std["result"]["harmonization"]["followup.lab_value"]
+    check("标准化运行输出可比范围与无法比较比例（不插补为零）",
+          hv["totals"]["values_total"] > 0
+          and hv["totals"]["comparable"] < hv["totals"]["values_total"]
+          and hv["totals"]["counts"]["censored_low"] >= 1
+          and hv["totals"]["counts"]["qc_failed"] >= 1
+          and hv["totals"]["counts"]["above_range"] >= 1
+          and hv["totals"]["counts"]["outside_validity"] >= 1
+          and "C6" in hv["non_comparable_centers"])
+    c2_snap = next(c for c in run_std["calibrations"] if c["center_code"] == "C2")
+    check("运行快照记录每家中心的校准版本与转换哈希",
+          c2_snap["model_version_no"] == base_v and c2_snap["transform_hash"]
+          and len(run_std["calibrations"]) == 6)
+
+    # ---- 2c. reagent-lot drift + new calibration only affects new runs ---------
+    drift = httpx.post(f"{BASE}/api/harmonization/assays/C2/fit", headers=admin,
+                       json={}).json()
+    check("试剂批次漂移诊断：含漂移批次的拟合被拒绝为不可比",
+          drift["status"] == "rejected"
+          and any(d["lot"] == "B-2502" for d in drift["diagnostics"].get("lot_drift", [])))
+    refit = httpx.post(f"{BASE}/api/harmonization/assays/C2/fit", headers=admin,
+                       json={"exclude_lots": ["B-2502"]}).json()
+    check("C2 重新拟合生成新校准版本（排除漂移批次）",
+          refit["version_no"] == drift["version_no"] + 1
+          and refit["status"] == "validated"
+          and "B-2502" in (refit["notes"] or ""))
+    old_c2 = next(c for c in httpx.get(
+        f"{BASE}/api/runs/{run_std['id']}", headers=r1).json()["calibrations"]
+        if c["center_code"] == "C2")
+    check("历史运行保留当时转换函数（版本复现）",
+          old_c2["model_version_no"] == base_v
+          and old_c2["transform_hash"] == c2_snap["transform_hash"])
+    run_std2 = httpx.post(f"{BASE}/api/runs", headers=r1,
+                          json={"rule_version_id": 1,
+                                "request_spec": std_spec}).json()
+    new_c2 = next(c for c in run_std2["calibrations"] if c["center_code"] == "C2")
+    hv2 = run_std2["result"]["harmonization"]["followup.lab_value"]["centers"]["C2"]
+    check("新校准仅用于新运行，且漂移批次样本不再可比",
+          new_c2["model_version_no"] == refit["version_no"]
+          and new_c2["transform_hash"] != c2_snap["transform_hash"]
+          and hv2["counts"]["qc_failed"] >= 1)
+
     # ---- 3. batch replacement keeps run snapshots -------------------------------
     batches_a = {b["center_code"]: b["batch_id"] for b in run_full["batches"]}
     new_batch = httpx.post(f"{BASE}/api/admin/centers/C2/batches/sync",

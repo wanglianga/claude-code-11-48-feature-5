@@ -56,6 +56,9 @@ export default function Runs() {
       ms.push({ type: 'outcome_count', variable: 'followup.outcome', value: 'remission' })
     }
     if (metrics.includes('lab')) ms.push({ type: 'mean', variable: 'followup.lab_value' })
+    if (metrics.includes('std')) {
+      ms.push({ type: 'standardized_mean', variable: 'followup.lab_value' })
+    }
     try {
       const run = await api.post('/api/runs', {
         rule_version_id: Number(versionId),
@@ -114,7 +117,11 @@ export default function Runs() {
           </label>
           <label>
             <input type="checkbox" checked={metrics.includes('lab')}
-              onChange={() => toggle(metrics, setMetrics, 'lab')} /> 实验室指标均值（C5 缺映射）
+              onChange={() => toggle(metrics, setMetrics, 'lab')} /> 实验室指标均值（原始，C5 缺映射）
+          </label>
+          <label>
+            <input type="checkbox" checked={metrics.includes('std')}
+              onChange={() => toggle(metrics, setMetrics, 'std')} /> 实验室指标标准化均值（跨中心可比）
           </label>
           <button disabled={!versionId || groupBy.length === 0} onClick={createRun}>
             启动运行

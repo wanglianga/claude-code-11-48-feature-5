@@ -9,8 +9,11 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from .agents import get_agent_client
+from .harmonize import fit_assay, sync_assay
 from .models import (
+    CalibrationSample,
     Center,
+    CenterAssay,
     CenterMapping,
     CohortRule,
     DataBatch,
@@ -105,6 +108,49 @@ def wait_for_agents(client, centers: list[str], timeout_s: int = 45) -> None:
         raise RuntimeError(f"center agents not reachable: {sorted(pending)}")
 
 
+def _seed_calibration(db: Session, client, centers: dict[str, Center]) -> None:
+    """Register assay metadata from the agents and fit demo calibration models.
+
+    C2 is seeded with a first model (v1) fitted on its original lot only; a
+    later re-fit is what demonstrates that a *new* calibration version only
+    affects new runs. Centers whose calibration cannot be validated (C3 single
+    lot bridge, C5 no bridge pairs) get an explicit rejected version instead of
+    being silently pooled.
+    """
+    for code, center in centers.items():
+        try:
+            payload = client.assay(code)
+        except Exception:
+            continue
+        sync_assay(db, center, payload)
+    db.commit()
+
+    admin_id = db.query(User).filter(User.username == "admin").first().id
+    order = ["C1", "C2", "C4", "C6", "C3", "C5"]
+    by_code = {c.code: c for c in db.query(Center)}
+    for code in order:
+        center = by_code.get(code)
+        if not center:
+            continue
+        assay = (db.query(CenterAssay)
+                 .filter(CenterAssay.center_id == center.id).first())
+        if not assay:
+            continue
+        if code == "C2":
+            # Fit v1 using only the original lot, then restore the drifted
+            # lot's samples so a later refit can include them.
+            drifted = [s for s in db.query(CalibrationSample)
+                       .filter(CalibrationSample.assay_id == assay.id,
+                               CalibrationSample.lot != assay.reagent_lot)]
+            for s in drifted:
+                db.delete(s)
+            db.commit()
+            fit_assay(db, assay, admin_id)
+        else:
+            fit_assay(db, assay, admin_id)
+    db.commit()
+
+
 def seed(db: Session, client=None, wait: bool = True) -> None:
     if db.query(User).count() > 0:
         return
@@ -129,7 +175,8 @@ def seed(db: Session, client=None, wait: bool = True) -> None:
     db.flush()
     for name, entity, label, vtype, allowed in VARIABLES:
         db.add(Variable(dict_id=dictionary.id, name=name, entity=entity,
-                        label=label, value_type=vtype, allowed_values=allowed))
+                        label=label, value_type=vtype, allowed_values=allowed,
+                        unit="mg/L" if name == "followup.lab_value" else None))
     db.flush()
 
     for code, fields in CENTER_FIELDS.items():
@@ -156,6 +203,8 @@ def seed(db: Session, client=None, wait: bool = True) -> None:
                              "fields": meta.get("fields", [])},
         ))
     db.flush()
+
+    _seed_calibration(db, client, centers)
 
     # Demo cohort rule, already approved so a first run can start immediately.
     rule = CohortRule(name="罕见病治疗路径结局对比", owner_id=1)

@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import Base, SessionLocal, engine
-from .routers import admin, auth, meta, outputs, reports, rules, runs
+from .routers import admin, auth, harmonization, meta, outputs, reports, rules, runs
 from .seed import seed
 
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +26,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(meta.router)
+app.include_router(harmonization.router)
 app.include_router(admin.router)
 app.include_router(rules.router)
 app.include_router(runs.router)

@@ -52,7 +52,7 @@ def list_dictionaries(db: Session = Depends(get_db), _: User = Depends(admin)):
     return [{"id": d.id, "version": d.version, "status": d.status,
              "variables": [{"name": v.name, "entity": v.entity, "label": v.label,
                             "value_type": v.value_type,
-                            "allowed_values": v.allowed_values}
+                            "allowed_values": v.allowed_values, "unit": v.unit}
                            for v in d.variables]}
             for d in db.query(Dictionary).all()]
 

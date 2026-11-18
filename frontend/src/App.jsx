@@ -10,6 +10,7 @@ import Compare from './pages/Compare'
 import Review from './pages/Review'
 import ReviewDetail from './pages/ReviewDetail'
 import Reports from './pages/Reports'
+import Harmonization from './pages/Harmonization'
 
 const ROLE_HOME = {
   data_admin: '/admin',
@@ -22,6 +23,9 @@ function Nav() {
   if (!user) return null
   const links = []
   if (user.role === 'data_admin') links.push(['/admin', '数据与批次'])
+  if (user.role === 'data_admin' || user.role === 'researcher' || user.role === 'reviewer') {
+    links.push(['/harmonization', '检测口径校准'])
+  }
   if (user.role === 'researcher') {
     links.push(['/rules', '队列规则'])
     links.push(['/runs', '运行'])
@@ -61,6 +65,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/admin" element={<Guard><Admin /></Guard>} />
+          <Route path="/harmonization" element={<Guard><Harmonization /></Guard>} />
           <Route path="/rules" element={<Guard><Rules /></Guard>} />
           <Route path="/rules/:id" element={<Guard><RuleEditor /></Guard>} />
           <Route path="/runs" element={<Guard><Runs /></Guard>} />

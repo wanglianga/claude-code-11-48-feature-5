@@ -41,6 +41,12 @@ export default function RunDetail() {
 
   if (!run) return <div className="panel">加载中…</div>
   const cov = run.result.coverage
+  const harm = run.result.harmonization || {}
+  const harmVars = Object.keys(harm)
+  const CAL_STATUS = {
+    applied: ['已应用', 'ok'], rejected: ['校准不可用', 'bad'],
+    unavailable: ['无校准模型', 'warn'],
+  }
 
   return (
     <>
@@ -90,6 +96,93 @@ export default function RunDetail() {
         )}
         <h3>聚合结果（仅汇总通过执行的中心统计量）</h3>
         <ResultTable table={run.result} />
+
+        {run.calibrations?.length > 0 && (
+          <>
+            <h3>本次运行使用的检测口径版本（启动时快照，后续重新校准不影响本运行）</h3>
+            <table className="grid">
+              <thead>
+                <tr><th>中心</th><th>检测指标</th><th>校准版本</th><th>路线</th>
+                  <th>状态</th><th>可比范围</th><th>转换函数</th><th>哈希</th></tr>
+              </thead>
+              <tbody>
+                {run.calibrations.map((c) => {
+                  const [label, cls] = CAL_STATUS[c.status] || [c.status, '']
+                  return (
+                    <tr key={`${c.center_code}-${c.variable}`}>
+                      <td className="mono">{c.center_code}</td>
+                      <td className="mono small">{c.variable}</td>
+                      <td>{c.model_version_no ? `v${c.model_version_no}` : '—'}</td>
+                      <td className="small">{c.route || '—'}</td>
+                      <td><span className={`tag ${cls}`}>{label}</span></td>
+                      <td className="small">
+                        {c.range_low != null ? `${c.range_low} – ${c.range_high}` : '—'}
+                      </td>
+                      <td className="mono small">
+                        {c.enabled ? `y = ${c.intercept} + ${c.slope}·x` : '—'}
+                      </td>
+                      <td className="mono small">{c.transform_hash?.slice(0, 10) || '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {harmVars.length > 0 && harmVars.map((v) => {
+          const hv = harm[v]
+          return (
+            <div key={v}>
+              <h3>标化覆盖与无法比较比例：<span className="mono">{v}</span></h3>
+              <div className="alert">
+                纳入可比值 <b>{hv.totals.comparable}</b> / 全部检测值 <b>{hv.totals.values_total}</b>
+                （无法比较 {hv.totals.non_comparable}，占{' '}
+                {hv.totals.non_comparable_ratio != null
+                  ? `${(hv.totals.non_comparable_ratio * 100).toFixed(1)}%` : '—'}）。
+                以下分类保留区间/删失状态，不插补为零：
+                <div className="small" style={{ marginTop: 4 }}>
+                  {Object.entries(hv.totals.counts).map(([k, n]) => (
+                    <span key={k} style={{ marginRight: 10 }}>
+                      {k} = <b>{n}</b>
+                    </span>
+                  ))}
+                </div>
+                {hv.non_comparable_centers.length > 0 && (
+                  <div className="small" style={{ marginTop: 4 }}>
+                    无可用校准、整体不纳入比较的中心：<b>{hv.non_comparable_centers.join(', ')}</b>
+                  </div>
+                )}
+              </div>
+              <table className="grid">
+                <thead>
+                  <tr><th>中心</th><th>校准版本</th><th>可比</th><th>低于检出限</th>
+                    <th>低于范围</th><th>高于范围</th><th>质控失败</th><th>有效期外</th>
+                    <th>无校准</th><th>无法比较比例</th></tr>
+                </thead>
+                <tbody>
+                  {Object.entries(hv.centers).map(([code, cv]) => (
+                    <tr key={code}>
+                      <td className="mono">{code}</td>
+                      <td>{cv.transform_version ? `v${cv.transform_version}` : '—'}</td>
+                      <td>{cv.counts.comparable}</td>
+                      <td>{cv.counts.censored_low}</td>
+                      <td>{cv.counts.below_range}</td>
+                      <td>{cv.counts.above_range}</td>
+                      <td>{cv.counts.qc_failed}</td>
+                      <td>{cv.counts.outside_validity}</td>
+                      <td>{cv.counts.uncalibrated}</td>
+                      <td>
+                        {cv.non_comparable_ratio != null
+                          ? `${(cv.non_comparable_ratio * 100).toFixed(1)}%` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        })}
         {user.role === 'researcher' && run.status.startsWith('completed') && (
           <div className="row" style={{ marginTop: 12 }}>
             <input

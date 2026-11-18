@@ -26,6 +26,12 @@ export default function Compare() {
     return run.batches.map((x) => `${x.center_code}:#${x.batch_id}(${x.batch_label})`).join('  ')
   }
 
+  function calibrationLine(run) {
+    return (run.calibrations || [])
+      .map((c) => `${c.center_code}:${c.model_version_no ? `v${c.model_version_no}` : '无'}`)
+      .join('  ')
+  }
+
   function deltaRows() {
     if (!data) return []
     const ga = Object.fromEntries(data.a.result.groups.map((g) => [g.label, g]))
@@ -62,7 +68,7 @@ export default function Compare() {
           <div className="panel">
             <h3>版本与批次</h3>
             <table className="grid">
-              <thead><tr><th></th><th>规则版本</th><th>条件哈希</th><th>批次集</th><th>覆盖</th></tr></thead>
+              <thead><tr><th></th><th>规则版本</th><th>条件哈希</th><th>批次集</th><th>校准版本</th><th>覆盖</th></tr></thead>
               <tbody>
                 {['a', 'b'].map((k) => (
                   <tr key={k}>
@@ -70,6 +76,7 @@ export default function Compare() {
                     <td>v{data[k].rule_version_no}</td>
                     <td className="mono small">{data[k].conditions_hash?.slice(0, 12)}…</td>
                     <td className="mono small">{batchLine(data[k])}</td>
+                    <td className="mono small">{calibrationLine(data[k]) || '—'}</td>
                     <td>{data[k].result.coverage.complete
                       ? '完整'
                       : `缺口：${data[k].result.coverage.excluded_centers.map((e) => e.center).join(', ')}`}</td>
